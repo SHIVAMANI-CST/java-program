@@ -1,0 +1,85 @@
+version: 1
+env:
+  variables:
+    AMPLIFY_APP_ID: $AWS_APP_ID
+    AMPLIFY_BRANCH: $AWS_BRANCH
+    GITHUB_REPO_UR: $AWS_CLONE_URL
+    GITHUB_SHA: $AWS_COMMIT_ID
+backend:
+  phases:
+    build:
+      commands:
+        - npm ci --cache .npm --prefer-offline
+        - npx ampx generate outputs --branch $AWS_BRANCH --app-id $AMPLIFY_BACKEND_APPID
+frontend:
+  phases:
+    preBuild:
+      commands:
+        - npm ci --cache .npm --prefer-offline
+        - |
+          if [[ "$AWS_BRANCH" == "test" || "$AWS_BRANCH" == "prod" ]]; then
+            aws sns publish \
+              --topic-arn ${SNS_TOPIC_ARN} \
+              --message "{\"branch\":\"${AWS_BRANCH}\",\"status\":\"STARTED\",\"commitId\":\"${AWS_COMMIT_ID}\",\"repoUrl\":\"${AWS_CLONE_URL}\"}" \
+              --message-attributes '{
+                "buildStatus": {
+                  "DataType": "String",
+                  "StringValue": "STARTED"
+                },
+                "branch": {
+                  "DataType": "String",
+                  "StringValue": "'${AWS_BRANCH}'"
+                },
+                "CommitId": {
+                  "DataType": "String",
+                  "StringValue": "'${AWS_COMMIT_ID}'"
+                },
+                "repoUrl": {
+                  "DataType": "String",
+                  "StringValue": "'${AWS_CLONE_URL}'"
+                }
+              }'
+          fi
+    build:
+      commands:
+        - npm ci
+        - npm run build
+    postBuild:
+      commands:
+        - |
+          BUILD_STATUS="FAILED"
+          if [ $CODEBUILD_BUILD_SUCCEEDING -eq 1 ]; then
+            BUILD_STATUS="SUCCESS"
+          fi
+        - |
+          if [[ "$AWS_BRANCH" == "test" || "$AWS_BRANCH" == "prod" ]]; then
+            aws sns publish \
+              --topic-arn ${SNS_TOPIC_ARN} \
+              --message "{\"branch\":\"${AWS_BRANCH}\",\"status\":\"${BUILD_STATUS}\",\"commitId\":\"${AWS_COMMIT_ID}\",\"repoUrl\":\"${AWS_CLONE_URL}\"}" \
+              --message-attributes '{
+                "buildStatus": {
+                  "DataType": "String",
+                  "StringValue": "'${BUILD_STATUS}'"
+                },
+                "branch": {
+                  "DataType": "String",
+                  "StringValue": "'${AWS_BRANCH}'"
+                },
+                "CommitId": {
+                  "DataType": "String",
+                  "StringValue": "'${AWS_COMMIT_ID}'"
+                },
+                "repoUrl": {
+                  "DataType": "String",
+                  "StringValue": "'${AWS_CLONE_URL}'"
+                }
+              }'
+          fi
+  artifacts:
+    baseDirectory: .next
+    files:
+      - '**/*'
+  cache:
+    paths:
+      - .next/cache/**/*
+      - .npm/**/*
